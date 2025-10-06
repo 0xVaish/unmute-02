@@ -1,12 +1,14 @@
 """
-Bark TTS Service
-Most natural human-like voice synthesis using Bark
+Bark TTS Service - Enhanced with Better Error Handling
+Most natural human-like voice synthesis using TTS library
 """
 
 import os
 import io
 import logging
 import tempfile
+import shutil
+import time
 from typing import Optional
 
 import torch
@@ -17,290 +19,213 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-# Import Bark
-try:
-    from bark import SAMPLE_RATE, generate_audio, preload_models
-    from bark.generation import set_seed
-    BARK_AVAILABLE = True
-except ImportError:
-    BARK_AVAILABLE = False
-    logging.warning("Bark not available, using fallback")
-
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-DEVICE = "cuda" if torch.cuda.is_available() and os.getenv("DEVICE") == "cuda" else "cpu"
-VOICE_PRESET = os.getenv("VOICE_PRESET", "v2/en_speaker_6")  # Professional female
-VOICE_PRESET_MALE = os.getenv("VOICE_PRESET_MALE", "v2/en_speaker_9")  # Professional male
-ENABLE_VOICE_CLONING = os.getenv("ENABLE_VOICE_CLONING", "true").lower() == "true"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MODEL_NAME = "tts_models/multilingual/multi-dataset/bark"
 
-# Model loaded flag
-models_loaded = False
+# Global model instance
+tts_model = None
 
-# Create FastAPI app
+# Create FastAPI app    
 app = FastAPI(
     title="Bark TTS Service",
-    description="Natural human-like voice synthesis using Bark",
+    description="Natural human-like voice synthesis",
     version="1.0.0"
 )
 
-
 class TTSRequest(BaseModel):
     text: str
-    voice_preset: Optional[str] = None
-    voice_sample: Optional[str] = None
-    temperature: float = 0.7
-    silence_padding: float = 0.25
+    voice: Optional[str] = "v2/en_speaker_6"
+    speed: Optional[float] = 1.0
 
+def clear_corrupted_cache():
+    """Clear potentially corrupted model cache"""
+    cache_dirs = [
+        "/root/.local/share/tts/tts_models--multilingual--multi-dataset--bark",
+        os.path.expanduser("~/.local/share/tts/tts_models--multilingual--multi-dataset--bark"),
+        "/tmp/tts_cache"
+    ]
+    
+    for cache_dir in cache_dirs:
+        if os.path.exists(cache_dir):
+            try:
+                logger.info(f"🧹 Clearing cache directory: {cache_dir}")
+                shutil.rmtree(cache_dir)
+            except Exception as e:
+                logger.warning(f"Could not clear cache {cache_dir}: {e}")
+
+def setup_torch_compatibility():
+    """Setup torch for better compatibility"""
+    # Environment variables for better compatibility
+    os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+    os.environ['TORCH_USE_CUDA_DSA'] = '1'
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+    
+    # Override torch.load for compatibility
+    import torch._utils
+    original_load = torch.load
+    
+    def safe_load(*args, **kwargs):
+        kwargs.pop('weights_only', None)
+        try:
+            return original_load(*args, weights_only=False, **kwargs)
+        except Exception as e:
+            logger.error(f"Failed to load with safe_load: {e}")
+            # Try with map_location
+            kwargs['map_location'] = 'cpu'
+            return original_load(*args, weights_only=False, **kwargs)
+    
+    torch.load = safe_load
+    return original_load
 
 @app.on_event("startup")
 async def startup_event():
-    """Load Bark models on startup"""
-    global models_loaded
-    
-    if not BARK_AVAILABLE:
-        logger.error("❌ Bark is not available")
-        return
-    
-    logger.info(f"🎵 Loading Bark models on {DEVICE}")
+    """Load TTS model with comprehensive error handling"""
+    global tts_model
     
     try:
-        # Preload all Bark models
-        preload_models(
-            text_use_gpu=DEVICE == "cuda",
-            text_use_small=False,
-            coarse_use_gpu=DEVICE == "cuda",
-            coarse_use_small=False,
-            fine_use_gpu=DEVICE == "cuda",
-            fine_use_small=False,
-            codec_use_gpu=DEVICE == "cuda"
-        )
+        # Import TTS library
+        from TTS.api import TTS
         
-        models_loaded = True
-        logger.info("✅ Bark models loaded successfully")
+        logger.info(f"🎤 Loading Bark TTS model on {DEVICE}")
         
-        # Warm up with a short generation
-        logger.info("🔥 Warming up Bark...")
-        set_seed(42)
-        _ = generate_audio("Hello", history_prompt=VOICE_PRESET)
-        logger.info("✅ Bark warmed up")
+        # Clear any corrupted cache first
+        clear_corrupted_cache()
         
+        # Setup torch compatibility
+        original_load = setup_torch_compatibility()
+        
+        # Try loading with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"📥 Attempt {attempt + 1}/{max_retries} to load model...")
+                
+                # Load model with explicit device handling
+                tts_model = TTS(MODEL_NAME)
+                
+                if DEVICE == "cuda" and torch.cuda.is_available():
+                    tts_model = tts_model.to(DEVICE)
+                    logger.info(f"✅ Bark model loaded on {DEVICE}")
+                else:
+                    logger.info("✅ Bark model loaded on CPU")
+                
+                # Test the model with a simple synthesis
+                test_audio = tts_model.tts("Hello")
+                logger.info("🎯 Model test synthesis successful")
+                break
+                
+            except Exception as e:
+                logger.error(f"❌ Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    logger.info("🔄 Clearing cache and retrying...")
+                    clear_corrupted_cache()
+                    time.sleep(5)  # Wait before retry
+                else:
+                    logger.error("❌ All attempts failed")
+                    tts_model = None
+        
+        # Restore original torch.load
+        torch.load = original_load
+        
+        if tts_model is not None:
+            logger.info("✅ Bark TTS service ready")
+        else:
+            logger.info("🔄 Service will run in degraded mode")
+            
+    except ImportError:
+        logger.error("❌ TTS library is not available")
     except Exception as e:
-        logger.error(f"❌ Failed to load Bark models: {e}")
-        models_loaded = False
-
+        logger.error(f"❌ Failed to load Bark TTS model: {e}")
+        logger.info("🔄 Service will run in degraded mode")
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     
-    if not BARK_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Bark not available")
-    
-    if not models_loaded:
-        raise HTTPException(status_code=503, detail="Models not loaded")
+    if tts_model is None:
+        return {"status": "degraded", "message": "Model not loaded", "device": DEVICE}
     
     return {
         "status": "healthy",
+        "model": MODEL_NAME,
         "device": DEVICE,
-        "voice_preset": VOICE_PRESET,
-        "voice_cloning_enabled": ENABLE_VOICE_CLONING,
-        "sample_rate": SAMPLE_RATE
+        "tts_available": True
     }
 
-
-@app.post("/generate")
-async def generate_speech(request: TTSRequest):
+@app.post("/synthesize")
+async def synthesize_speech(request: TTSRequest):
     """
-    Generate speech from text using Bark
+    Synthesize speech from text
     
     Args:
         request: TTS request with text and voice parameters
     
     Returns:
-        Audio file (WAV format)
+        Audio file as WAV
     """
     
-    if not BARK_AVAILABLE or not models_loaded:
-        raise HTTPException(status_code=503, detail="Bark service not available")
+    if tts_model is None:
+        raise HTTPException(status_code=503, detail="Bark TTS not available")
     
     try:
-        text = request.text.strip()
+        logger.info(f"🎯 Synthesizing: '{request.text[:50]}...'")
         
-        if not text:
-            raise HTTPException(status_code=400, detail="Text cannot be empty")
-        
-        if len(text) > 500:
-            raise HTTPException(status_code=400, detail="Text too long (max 500 characters)")
-        
-        logger.info(f"🎵 Generating speech for: '{text[:50]}...'")
-        
-        # Select voice preset
-        voice_preset = request.voice_preset or VOICE_PRESET
-        
-        # Set random seed for consistency
-        set_seed(42)
-        
-        # Handle voice cloning if provided
-        if request.voice_sample and ENABLE_VOICE_CLONING:
-            # TODO: Implement voice cloning from sample
-            # For now, use default preset
-            logger.info("🎭 Voice cloning requested (using default preset for now)")
-        
-        # Generate audio
-        audio_array = generate_audio(
-            text,
-            history_prompt=voice_preset,
-            text_temp=request.temperature,
-            waveform_temp=request.temperature
+        # Generate audio using TTS
+        audio = tts_model.tts(
+            text=request.text,
+            speaker=request.voice if hasattr(tts_model, 'speakers') else None
         )
         
-        # Add silence padding if requested
-        if request.silence_padding > 0:
-            silence_samples = int(SAMPLE_RATE * request.silence_padding)
-            silence = np.zeros(silence_samples, dtype=audio_array.dtype)
-            audio_array = np.concatenate([silence, audio_array, silence])
+        # Convert to numpy array if needed
+        if isinstance(audio, list):
+            audio = np.array(audio)
         
-        # Convert to WAV format
-        audio_buffer = io.BytesIO()
-        sf.write(audio_buffer, audio_array, SAMPLE_RATE, format='WAV')
-        audio_data = audio_buffer.getvalue()
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            sf.write(temp_file.name, audio, 24000)  # Bark uses 24kHz
+            
+            # Read back as bytes
+            with open(temp_file.name, "rb") as f:
+                audio_bytes = f.read()
+            
+            # Clean up
+            os.unlink(temp_file.name)
         
-        logger.info(f"✅ Generated {len(audio_data)} bytes of audio")
+        logger.info("✅ Speech synthesis complete")
         
         return Response(
-            content=audio_data,
+            content=audio_bytes,
             media_type="audio/wav",
-            headers={
-                "Content-Disposition": "attachment; filename=bark_output.wav",
-                "X-Audio-Duration": str(len(audio_array) / SAMPLE_RATE),
-                "X-Sample-Rate": str(SAMPLE_RATE)
-            }
+            headers={"Content-Disposition": "attachment; filename=speech.wav"}
         )
         
     except Exception as e:
-        logger.error(f"❌ Speech generation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Speech generation failed: {str(e)}")
-
-
-@app.post("/generate_with_emotions")
-async def generate_speech_with_emotions(request: TTSRequest):
-    """
-    Generate speech with emotional markers
-    
-    Bark supports emotional cues in text like:
-    - [laughs], [sighs], [clears throat]
-    - CAPITALIZATION for emphasis
-    - ... for pauses
-    """
-    
-    if not BARK_AVAILABLE or not models_loaded:
-        raise HTTPException(status_code=503, detail="Bark service not available")
-    
-    try:
-        text = request.text.strip()
-        
-        # Add some natural speech patterns for medical context
-        if "hello" in text.lower() and "assistant" in text.lower():
-            text = f"[clears throat] {text}"
-        
-        # Use the regular generation with emotional text
-        request.text = text
-        return await generate_speech(request)
-        
-    except Exception as e:
-        logger.error(f"❌ Emotional speech generation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Speech generation failed: {str(e)}")
-
+        logger.error(f"❌ Speech synthesis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 @app.get("/voices")
 async def get_available_voices():
-    """Get list of available voice presets"""
-    
-    # Bark voice presets (professional medical voices)
-    voices = {
-        "female_professional": {
-            "id": "v2/en_speaker_6",
-            "name": "Dr. Sarah",
-            "gender": "female",
-            "description": "Professional, warm female doctor voice",
-            "best_for": ["consultations", "explanations", "empathetic responses"]
-        },
-        "male_professional": {
-            "id": "v2/en_speaker_9", 
-            "name": "Dr. Michael",
-            "gender": "male",
-            "description": "Calm, authoritative male doctor voice",
-            "best_for": ["emergency guidance", "serious discussions"]
-        },
-        "female_friendly": {
-            "id": "v2/en_speaker_0",
-            "name": "Nurse Jenny",
-            "gender": "female", 
-            "description": "Gentle, caring female voice",
-            "best_for": ["patient care", "comfort", "medication reminders"]
-        },
-        "neutral_assistant": {
-            "id": "v2/en_speaker_3",
-            "name": "Medical Assistant",
-            "gender": "neutral",
-            "description": "Professional, clear assistant voice",
-            "best_for": ["information", "appointments", "general queries"]
-        }
-    }
+    """Get available voice options"""
     
     return {
-        "voices": voices,
-        "default_voice": VOICE_PRESET,
-        "voice_cloning_enabled": ENABLE_VOICE_CLONING,
-        "emotional_markers": [
-            "[laughs]", "[sighs]", "[clears throat]", 
-            "[whispers]", "[shouting]", "..."
-        ]
+        "voices": [
+            "v2/en_speaker_0", "v2/en_speaker_1", "v2/en_speaker_2",
+            "v2/en_speaker_3", "v2/en_speaker_4", "v2/en_speaker_5",
+            "v2/en_speaker_6", "v2/en_speaker_7", "v2/en_speaker_8",
+            "v2/en_speaker_9"
+        ],
+        "default": "v2/en_speaker_6"
     }
-
-
-@app.post("/test_voice")
-async def test_voice(voice_preset: str = "v2/en_speaker_6"):
-    """
-    Test a voice preset with a standard medical phrase
-    """
-    
-    test_text = "Hello, I'm your medical assistant. How can I help you today?"
-    
-    request = TTSRequest(
-        text=test_text,
-        voice_preset=voice_preset,
-        temperature=0.7
-    )
-    
-    return await generate_speech(request)
-
-
-@app.get("/model_info")
-async def get_model_info():
-    """Get information about the Bark model"""
-    
-    return {
-        "model_name": "Bark",
-        "version": "1.0",
-        "device": DEVICE,
-        "sample_rate": SAMPLE_RATE if BARK_AVAILABLE else None,
-        "max_text_length": 500,
-        "voice_cloning": ENABLE_VOICE_CLONING,
-        "emotional_synthesis": True,
-        "languages": ["English"],
-        "model_loaded": models_loaded,
-        "bark_available": BARK_AVAILABLE
-    }
-
 
 if __name__ == "__main__":
     uvicorn.run(
         "bark_service:app",
         host="0.0.0.0",
-        port=8005,
+        port=8006,
         log_level="info"
     )
