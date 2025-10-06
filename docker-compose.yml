@@ -118,23 +118,24 @@ services:
       timeout: 10s
       retries: 3
 
-  # Bark TTS (Most Natural Human-like Voice)
-  bark-tts-server:
+  # Dia TTS (Ultra-realistic Dialogue Generation)
+  dia-tts-server:
     build:
-      context: ./services/bark-tts
+      context: ./services/dia-tts
       dockerfile: Dockerfile
-    container_name: medical-bark-tts
+    container_name: medical-dia-tts
     ports:
-      - "8005:8005"
+      - "8006:8006"
     volumes:
-      - ./models/bark:/app/models
+      - ./models/dia:/app/models
       - ./voices:/app/voices
     environment:
       - DEVICE=cuda
-      - VOICE_PRESET=v2/en_speaker_6  # Professional female voice
-      - VOICE_PRESET_MALE=v2/en_speaker_9  # Professional male voice
-      - ENABLE_VOICE_CLONING=true
-      - BATCH_SIZE=1
+      - MODEL_CHECKPOINT=nari-labs/Dia-1.6B-0626
+      - GUIDANCE_SCALE=3.0
+      - TEMPERATURE=1.8
+      - TOP_P=0.90
+      - TOP_K=45
     deploy:
       resources:
         reservations:
@@ -144,7 +145,7 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -167,7 +168,7 @@ services:
       - HIGGS_URL=http://higgs-tts:8002
       - CHATTERBOX_URL=http://chatterbox-tts:8003
       - KOKORO_URL=http://kokoro-tts:8004
-      - BARK_URL=http://bark-tts-server:8005
+      - DIA_URL=http://dia-tts-server:8006
       
       # Gemini Configuration
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -177,11 +178,11 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/medical_voice
       
-      # Voice Selection Strategy (Now with Bark!)
+      # Voice Selection Strategy (Now with Dia!)
       - PRIMARY_TTS=higgs        # Best quality
       - FALLBACK_TTS=chatterbox  # Fast backup
       - REALTIME_TTS=kokoro      # Ultra-fast
-      - NATURAL_TTS=bark         # Most natural/human-like
+      - NATURAL_TTS=dia          # Ultra-realistic dialogue
       - AUTO_FALLBACK=true
       - MAX_LATENCY_MS=200
       
@@ -195,7 +196,7 @@ services:
       - higgs-tts
       - chatterbox-tts
       - kokoro-tts
-      - bark-tts-server
+      - dia-tts-server
       - redis
       - postgres
     restart: unless-stopped
