@@ -27,5 +27,5 @@ cd /workspace/unmute-02/services/dia-tts
 python3 dia_service.py &
 
 echo "✅ Dia TTS service started!"
-echo "🔍 Use 'curl http://localhost:8006/health' to check health"
-echo "🎭 Use 'curl http://localhost:8006/features' to see available features"
+echo "🔍 Use 'curl http://localhost:8005/health' to check health"
+echo "🎭 Use 'curl http://localhost:8005/features' to see available features"

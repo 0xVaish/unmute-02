@@ -269,6 +269,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "dia_service:app",
         host="0.0.0.0",
-        port=8006,
+        port=8005,  # Use port 8005 (previously used by bark)
         log_level="info"
     )

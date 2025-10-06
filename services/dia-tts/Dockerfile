@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir git+https://github.com/nari-labs/dia.git
 COPY dia_service.py .
 
 # Expose port
-EXPOSE 8006
+EXPOSE 8005
 
 # Run the service
 CMD ["python", "dia_service.py"]
