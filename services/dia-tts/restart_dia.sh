@@ -17,9 +17,9 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 export TORCH_USE_CUDA_DSA=1
 export CUDA_LAUNCH_BLOCKING=1
 
-# Install/update Dia if needed
-echo "📦 Installing/updating Dia TTS..."
-pip install --upgrade git+https://github.com/nari-labs/dia.git
+# Install dependencies with conflict resolution
+echo "📦 Installing Dia TTS with fixed dependencies..."
+pip install -r /workspace/unmute-02/services/dia-tts/requirements.txt
 
 # Start the service
 echo "🚀 Starting Dia TTS service..."

@@ -1,0 +1,42 @@
+# Fixed dependencies for Dia TTS with conflict resolution
+# Based on the dependency conflicts observed
+
+# Core ML libraries with compatible versions
+torch==2.6.0
+torchaudio==2.6.0
+torchvision==0.22.1+cu118
+
+# Numpy - use version compatible with all packages
+numpy==1.22.0
+
+# Transformers - main branch for Dia support
+git+https://github.com/huggingface/transformers.git
+
+# TTS library with compatible numpy
+TTS==0.22.0
+
+# FastAPI and server
+fastapi==0.100.0
+uvicorn[standard]==0.22.0
+pydantic==2.0.0
+
+# Audio processing
+soundfile==0.12.0
+librosa==0.9.1
+
+# Tokenizers compatible with faster-whisper
+tokenizers==0.13.4
+
+# Gradio compatible version
+gradio==3.48.0
+
+# Protobuf compatible version
+protobuf==3.20.3
+
+# Other dependencies
+scipy==1.10.1
+matplotlib==3.7.1
+pillow==9.5.0
+
+# Dia TTS
+git+https://github.com/nari-labs/dia.git
