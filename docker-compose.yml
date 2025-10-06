@@ -118,24 +118,22 @@ services:
       timeout: 10s
       retries: 3
 
-  # Dia TTS (Ultra-realistic Dialogue Generation)
-  dia-tts-server:
+  # Coqui TTS (Stable High-Quality Voice Synthesis)
+  coqui-tts-server:
     build:
-      context: ./services/dia-tts
+      context: ./services/coqui-tts
       dockerfile: Dockerfile
-    container_name: medical-dia-tts
+    container_name: medical-coqui-tts
     ports:
       - "8005:8005"
     volumes:
-      - ./models/dia:/app/models
+      - ./models/coqui:/app/models
       - ./voices:/app/voices
     environment:
       - DEVICE=cuda
-      - MODEL_CHECKPOINT=nari-labs/Dia-1.6B-0626
-      - GUIDANCE_SCALE=3.0
-      - TEMPERATURE=1.8
-      - TOP_P=0.90
-      - TOP_K=45
+      - MODEL_NAME=tts_models/multilingual/multi-dataset/xtts_v2
+      - VOICE_CLONING=true
+      - BATCH_SIZE=1
     deploy:
       resources:
         reservations:
@@ -168,7 +166,7 @@ services:
       - HIGGS_URL=http://higgs-tts:8002
       - CHATTERBOX_URL=http://chatterbox-tts:8003
       - KOKORO_URL=http://kokoro-tts:8004
-      - DIA_URL=http://dia-tts-server:8005
+      - COQUI_URL=http://coqui-tts-server:8005
       
       # Gemini Configuration
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -178,11 +176,11 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/medical_voice
       
-      # Voice Selection Strategy (Now with Dia!)
+      # Voice Selection Strategy (Now with Coqui!)
       - PRIMARY_TTS=higgs        # Best quality
       - FALLBACK_TTS=chatterbox  # Fast backup
       - REALTIME_TTS=kokoro      # Ultra-fast
-      - NATURAL_TTS=dia          # Ultra-realistic dialogue
+      - NATURAL_TTS=coqui        # Stable high-quality voice
       - AUTO_FALLBACK=true
       - MAX_LATENCY_MS=200
       
@@ -196,7 +194,7 @@ services:
       - higgs-tts
       - chatterbox-tts
       - kokoro-tts
-      - dia-tts-server
+      - coqui-tts-server
       - redis
       - postgres
     restart: unless-stopped

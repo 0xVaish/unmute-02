@@ -1,0 +1,8 @@
+TTS>=0.22.0
+torch>=2.0.0
+torchaudio>=2.0.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pydantic>=2.0.0
+numpy>=1.21.0,<2.0.0
+soundfile>=0.12.0
