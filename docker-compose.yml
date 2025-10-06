@@ -1,0 +1,273 @@
+version: '3.8'
+
+services:
+  # Whisper STT Service (Best Speech Recognition)
+  whisper-stt:
+    build:
+      context: ./services/whisper
+      dockerfile: Dockerfile
+    container_name: medical-whisper
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./models/whisper:/app/models
+    environment:
+      - MODEL_SIZE=base  # base for speed, large for accuracy
+      - DEVICE=cuda
+      - LANGUAGE=en
+      - BATCH_SIZE=4
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Higgs Audio V2 TTS (Best Human-like Voice)
+  higgs-tts:
+    build:
+      context: ./services/higgs-audio
+      dockerfile: Dockerfile
+    container_name: medical-higgs
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./models/higgs:/app/models
+      - ./voices:/app/voices
+    environment:
+      - MODEL_NAME=bosonai/higgs-audio-v2-generation-3B-base
+      - DEVICE=cuda
+      - BATCH_SIZE=1  # For lowest latency
+      - VOICE_CLONING=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Chatterbox TTS (Fast Backup Voice)
+  chatterbox-tts:
+    build:
+      context: ./services/chatterbox
+      dockerfile: Dockerfile
+    container_name: medical-chatterbox
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./models/chatterbox:/app/models
+      - ./voices:/app/voices
+    environment:
+      - MODEL_NAME=ResembleAI/Chatterbox-Multilingual-TTS
+      - DEVICE=cuda
+      - BATCH_SIZE=2
+      - VOICE_CLONING=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kokoro TTS (Ultra-Fast Real-time)
+  kokoro-tts:
+    build:
+      context: ./services/kokoro
+      dockerfile: Dockerfile
+    container_name: medical-kokoro
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./models/kokoro:/app/models
+    environment:
+      - MODEL_NAME=hexgrad/Kokoro-82M
+      - DEVICE=cuda
+      - BATCH_SIZE=4  # Can handle more due to small size
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Bark TTS (Most Natural Human-like Voice)
+  bark-tts-server:
+    build:
+      context: ./services/bark-tts
+      dockerfile: Dockerfile
+    container_name: medical-bark-tts
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./models/bark:/app/models
+      - ./voices:/app/voices
+    environment:
+      - DEVICE=cuda
+      - VOICE_PRESET=v2/en_speaker_6  # Professional female voice
+      - VOICE_PRESET_MALE=v2/en_speaker_9  # Professional male voice
+      - ENABLE_VOICE_CLONING=true
+      - BATCH_SIZE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main Backend with Smart Voice Selection
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medical-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+    environment:
+      # Service URLs
+      - WHISPER_URL=http://whisper-stt:8001
+      - HIGGS_URL=http://higgs-tts:8002
+      - CHATTERBOX_URL=http://chatterbox-tts:8003
+      - KOKORO_URL=http://kokoro-tts:8004
+      - BARK_URL=http://bark-tts-server:8005
+      
+      # Gemini Configuration
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - USE_GEMINI=true
+      
+      # Database
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/medical_voice
+      
+      # Voice Selection Strategy (Now with Bark!)
+      - PRIMARY_TTS=higgs        # Best quality
+      - FALLBACK_TTS=chatterbox  # Fast backup
+      - REALTIME_TTS=kokoro      # Ultra-fast
+      - NATURAL_TTS=bark         # Most natural/human-like
+      - AUTO_FALLBACK=true
+      - MAX_LATENCY_MS=200
+      
+      # Medical Configuration
+      - MEDICAL_DOMAIN=general_practice
+      - ENABLE_EMERGENCY_DETECTION=true
+      - VOICE_CLONING=true
+      
+    depends_on:
+      - whisper-stt
+      - higgs-tts
+      - chatterbox-tts
+      - kokoro-tts
+      - bark-tts-server
+      - redis
+      - postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Web Interface
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medical-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
+      - NEXT_PUBLIC_VOICE_DEMO=true
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Redis for session management
+  redis:
+    image: redis:7-alpine
+    container_name: medical-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # PostgreSQL for conversation history
+  postgres:
+    image: postgres:15-alpine
+    container_name: medical-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=medical_voice
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+  # Nginx for production
+  nginx:
+    image: nginx:alpine
+    container_name: medical-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    profiles:
+      - production
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  default:
+    name: medical-voice-network
